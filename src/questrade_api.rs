@@ -7,7 +7,7 @@ const LOGIN_URL: &str = "https://login.questrade.com/oauth2/token";
 pub enum QuestradeAPIError {
     RequestError(reqwest::Error),
     JSONError(serde_json::Error),
-    APIError,
+    APIError(Option<String>),
 }
 
 impl Display for QuestradeAPIError {
@@ -15,7 +15,7 @@ impl Display for QuestradeAPIError {
         match self {
             QuestradeAPIError::RequestError(err) => write!(f, "Request error: {}", err),
             QuestradeAPIError::JSONError(err) => write!(f, "JSON error: {}", err),
-            QuestradeAPIError::APIError => write!(f, "Questrade API error"),
+            QuestradeAPIError::APIError(msg) => write!(f, "Questrade API error: {}", msg.as_deref().unwrap_or("")),
         }
     }
 }
@@ -122,12 +122,16 @@ pub fn get_accounts(
     client: &reqwest::blocking::Client,
     token: &OAuth2Token,
 ) -> Result<Vec<Account>, QuestradeAPIError> {
-    let body = client
+    let resp = client
         .get(format!("{}v1/accounts", token.api_server))
         .bearer_auth(token.access_token.clone())
-        .send()?
-        .text()?;
+        .send()?;
 
+    if !resp.status().is_success() {
+        return Err(QuestradeAPIError::APIError(Some(resp.text()?)));
+    }
+
+    let body = resp.text()?;
     let json = serde_json::from_str::<AccountsAPIResponse>(&body)?;
 
     Ok(json.accounts)
@@ -139,12 +143,16 @@ pub fn get_balances(
     account_id: &str,
 ) -> Result<Vec<Balance>, QuestradeAPIError> {
     let url = format!("{}v1/accounts/{}/balances", token.api_server, account_id);
-    let body = client
+    let resp = client
         .get(&url)
         .bearer_auth(token.access_token.clone())
-        .send()?
-        .text()?;
+        .send()?;
 
+    if !resp.status().is_success() {
+        return Err(QuestradeAPIError::APIError(Some(resp.text()?)));
+    }
+
+    let body = resp.text()?;
     let json = serde_json::from_str::<BalancesAPIResponse>(&body)?;
 
     Ok(json.combined_balances)
@@ -165,12 +173,16 @@ fn get_positions(
     account_id: &str,
 ) -> Result<Vec<Position>, QuestradeAPIError> {
     let url = format!("{}v1/accounts/{}/positions", token.api_server, account_id);
-    let body = client
+    let resp = client
         .get(&url)
         .bearer_auth(token.access_token.clone())
-        .send()?
-        .text()?;
+        .send()?;
 
+    if !resp.status().is_success() {
+        return Err(QuestradeAPIError::APIError(Some(resp.text()?)));
+    }
+
+    let body = resp.text()?;
     let json = serde_json::from_str::<PositionsAPIResponse>(&body)?;
 
     Ok(json.positions)
@@ -182,18 +194,23 @@ fn get_symbol(
     symbol_id: u32,
 ) -> Result<Symbol, QuestradeAPIError> {
     let url = format!("{}v1/symbols/{}", token.api_server, symbol_id);
-    let body = client
+    let resp = client
         .get(&url)
         .bearer_auth(token.access_token.clone())
-        .send()?
-        .text()?;
+        .send()?;
 
+    if !resp.status().is_success() {
+        return Err(QuestradeAPIError::APIError(Some(resp.text()?)));
+    }
+
+    let body = resp.text()?;
     let json = serde_json::from_str::<SymbolsAPIResponse>(&body)?;
+
     if let Some(symbol) = json.symbols.first() {
         return Ok(symbol.clone());
     }
 
-    Err(QuestradeAPIError::APIError)
+    Err(QuestradeAPIError::APIError(None))
 }
 
 pub fn get_positions_and_symbols(

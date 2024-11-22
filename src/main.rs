@@ -15,6 +15,7 @@ fn main() {
     let client = reqwest::blocking::Client::new();
     let coll = get_db_collection(&password);
     let refresh_token = get_refresh_token(&coll);
+    println!("Refresh token: {}", refresh_token);
 
     let token = match get_oauth2_token(&client, &refresh_token) {
         Ok(token) => {

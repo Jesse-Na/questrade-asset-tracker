@@ -1,4 +1,5 @@
 use std::{collections::HashMap, fmt};
+use colored::Colorize;
 
 use crate::questrade_api;
 
@@ -81,7 +82,7 @@ impl fmt::Display for Assets {
             write!(f, "{:<10} | {:<10.2} | {:>10.2}\n", String::from(asset_class), value, percent)?;
         }
         write!(f, "{}\n", "=".repeat(36))?;
-        write!(f, "{:<10} | {:<10.2}\n", "Total", self.total_market_values)?;
+        write!(f, "{:<10} | {:<10.2}\n", "Total".red(), self.total_market_values)?;
 
         Ok(())
     }
