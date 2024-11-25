@@ -2,33 +2,24 @@ mod assets;
 mod db;
 mod questrade_api;
 
-use std::env;
 use dotenv;
 
 use assets::Assets;
-use db::{get_db_collection, get_refresh_token, update_refresh_token};
-use questrade_api::{get_accounts, get_balances, get_oauth2_token, get_positions_and_symbols, display_balances, display_positions_with_dividends};
+use questrade_api::display_positions_with_dividends;
 
 fn main() {
     dotenv::dotenv().ok();
-    let password = env::vars().find(|(key, _)| key == "DB_PASSWORD").unwrap().1;
-    let client = reqwest::blocking::Client::new();
-    let coll = get_db_collection(&password);
-    let refresh_token = get_refresh_token(&coll);
-    println!("Refresh token: {}", refresh_token);
 
-    let token = match get_oauth2_token(&client, &refresh_token) {
-        Ok(token) => {
-            update_refresh_token(&coll, &refresh_token, &token.refresh_token);
-            token
-        },
+    let client = reqwest::blocking::Client::new();
+    let q_api = match questrade_api::QuestradeAPI::new(client) {
+        Ok(api) => api,
         Err(err) => {
-            eprintln!("Error getting OAuth2 token: {}", err);
+            eprintln!("Error creating QuestradeAPI: {}", err);
             return;
         }
     };
 
-    let accounts = match get_accounts(&client, &token) {
+    let accounts = match q_api.get_accounts() {
         Ok(accounts) => accounts,
         Err(err) => {
             eprintln!("Error getting accounts: {}", err);
@@ -41,7 +32,7 @@ fn main() {
     for account in accounts {
         println!("Account: {}—{}", account.type_, account.id);
 
-        let balances = match get_balances(&client, &token, &account.id) {
+        let balances = match q_api.get_balances(&account.id) {
             Ok(balances) => balances,
             Err(err) => {
                 eprintln!("Error getting balances for account {}: {}", account.id, err);
@@ -49,9 +40,9 @@ fn main() {
             }
         };
 
-        display_balances(&balances);
+        balances.display_balances();
 
-        let (positions, symbols) = match get_positions_and_symbols(&client, &token, &account.id) {
+        let (positions, symbols) = match q_api.get_positions_and_symbol_map(&account.id) {
             Ok(res) => res,
             Err(err) => {
                 eprintln!(
