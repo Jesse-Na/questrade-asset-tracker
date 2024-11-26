@@ -30,7 +30,7 @@ fn main() {
     let mut assets = Assets::new();
 
     for account in accounts {
-        println!("Account: {}—{}", account.type_, account.id);
+        println!("Account: {} — {}", account.type_, account.id);
 
         let balances = match q_api.get_balances(&account.id) {
             Ok(balances) => balances,

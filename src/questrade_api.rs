@@ -1,3 +1,4 @@
+use colored::{ColoredString, Colorize};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, env, fmt::Display};
 
@@ -175,12 +176,24 @@ impl Balances {
             "Currency", "Cash", "Market Value", "Total Equity"
         );
         println!("{}", "-".repeat(59));
-        for balance in self.combined_balances.iter() {
+        for balance in self.per_currency_balances.iter() {
             println!(
                 "{:<10} | {:<10.2} | {:<15.2} | {:>15.2}",
                 balance.currency, balance.cash, balance.market_value, balance.total_equity
             );
         }
+
+        println!("{}", "=".repeat(59));
+        self.combined_balances
+            .iter()
+            .find(|balance| balance.currency == "CAD")
+            .map(|balance| {
+                println!(
+                    "{:<10} | {:<10.2} | {:<15.2} | {:>15.2}",
+                    "Combined", balance.cash, balance.market_value, balance.total_equity
+                );
+            });
+
         println!();
     }
 }
@@ -239,6 +252,7 @@ pub struct Symbol {
 
 pub fn display_positions_with_dividends(positions: &Vec<Position>, symbols: &HashMap<u32, Symbol>) {
     println!("---Positions---");
+    println!();
     println!(
         "{:<10} | {:<10} | {:<10} | {:<15} | {:<15} | {:<15} | {:<10} | {:<10} | {:>10}",
         "Symbol",
@@ -255,7 +269,6 @@ pub fn display_positions_with_dividends(positions: &Vec<Position>, symbols: &Has
 
     let mut total_cost = 0.0;
     let mut total_mkt_val = 0.0;
-    let mut total_pnl = 0.0;
 
     for position in positions {
         let (dividend, yield_) = if let Some(symbol) = symbols.get(&position.symbol_id) {
@@ -278,18 +291,35 @@ pub fn display_positions_with_dividends(positions: &Vec<Position>, symbols: &Has
 
         total_cost += position.total_cost;
         total_mkt_val += position.current_market_value;
-        total_pnl += pnl;
 
         println!(
-            "{:<10} | {:<10} | {:<10.2} | {:<15.2} | {:<15.2} | {:<15.2} | {:<10.4} | {:<10.2} | {:>10.2}",
-            position.symbol, quantity, position.average_entry_price, position.total_cost, position.current_price, position.current_market_value, dividend, yield_, pnl
+            "{:<10} | {:<10} | {:<10.2} | {:<15.2} | {:<15.2} | {:<15.2} | {:<10.4} | {:<10.2} | {:>10}",
+            position.symbol, quantity, position.average_entry_price, position.total_cost, position.current_price, position.current_market_value, dividend, yield_, colour_pnl(pnl)
         );
     }
 
     println!("{}", "=".repeat(129));
     println!(
-        "{:<10} | {:<10} | {:<10} | {:<15.2} | {:<15} | {:<15.2} | {:<10} | {:<10} | {:>10.2}",
-        "Total", "", "", total_cost, "", total_mkt_val, "", "", total_pnl
+        "{:<10} | {:<10} | {:<10} | {:<15.2} | {:<15} | {:<15.2} | {:<10} | {:<10} | {:>10}",
+        "Total",
+        "",
+        "",
+        total_cost,
+        "",
+        total_mkt_val,
+        "",
+        "",
+        colour_pnl(total_mkt_val - total_cost)
     );
     println!();
+}
+
+fn colour_pnl(pnl: f64) -> ColoredString {
+    let pnl = (pnl * 100.0).round() / 100.0;
+
+    match 0.0.partial_cmp(&pnl).unwrap() {
+        std::cmp::Ordering::Less => pnl.to_string().green(),
+        std::cmp::Ordering::Equal => pnl.to_string().normal(),
+        std::cmp::Ordering::Greater => pnl.to_string().red(),
+    }
 }
