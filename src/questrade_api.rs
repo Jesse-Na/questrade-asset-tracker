@@ -251,7 +251,8 @@ pub struct Symbol {
 }
 
 pub fn display_positions_with_dividends(positions: &Vec<Position>, symbols: &HashMap<u32, Symbol>) {
-    println!("---Positions---");
+    let title = format!("{}Positions{}", "-".repeat(60), "-".repeat(60));
+    println!("{}", title.cyan());
     println!();
     println!(
         "{:<10} | {:<10} | {:<10} | {:<15} | {:<15} | {:<15} | {:<10} | {:<10} | {:>10}",

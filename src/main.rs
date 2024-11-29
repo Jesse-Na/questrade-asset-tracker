@@ -2,6 +2,7 @@ mod assets;
 mod db;
 mod questrade_api;
 
+use colored::Colorize;
 use dotenv;
 
 use assets::Assets;
@@ -30,7 +31,8 @@ fn main() {
     let mut assets = Assets::new();
 
     for account in accounts {
-        println!("Account: {} — {}", account.type_, account.id);
+        let account_title = format!("Account: {} — {}", account.type_, account.id);
+        println!("{}", account_title.blue());
 
         let balances = match q_api.get_balances(&account.id) {
             Ok(balances) => balances,
@@ -42,7 +44,7 @@ fn main() {
 
         balances.display_balances();
 
-        let (positions, symbols) = match q_api.get_positions_and_symbol_map(&account.id) {
+        let (mut positions, symbols) = match q_api.get_positions_and_symbol_map(&account.id) {
             Ok(res) => res,
             Err(err) => {
                 eprintln!(
@@ -54,6 +56,7 @@ fn main() {
         };
 
         assets.add_positions(&positions);
+        positions.sort_by(|a, b| b.current_market_value.total_cmp(&a.current_market_value));
         display_positions_with_dividends(&positions, &symbols);
     }
 
