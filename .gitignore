@@ -1,2 +1,3 @@
 /target
 .env
+questrade_asset_tracker.db

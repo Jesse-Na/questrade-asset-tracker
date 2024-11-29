@@ -1,35 +1,68 @@
-use mongodb::{
-    bson::{doc, Document},
-    sync::{Client, Collection},
-};
+use sqlx::{migrate::MigrateDatabase, FromRow};
 
-pub fn get_db_collection(db_password: &str) -> Result<Collection<Document>, mongodb::error::Error> {
-    let uri = format!("mongodb+srv://user:{db_password}@cluster0.2dmsm.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0");
-    let client = Client::with_uri_str(uri)?;
-    let database = client.database("questrade_asset_tracker_db");
-    Ok(database.collection("refresh_tokens"))
+const DB_URL: &str = "sqlite://questrade_asset_tracker.db";
+
+#[derive(Clone, FromRow, Debug)]
+pub struct RefreshToken {
+    id: i64,
+    pub refresh_token: String,
 }
 
-pub fn get_refresh_token(
-    coll: &Collection<Document>,
-) -> Result<Option<String>, mongodb::error::Error> {
-    if let Some(doc) = coll.find_one(doc! {}).run()? {
-        if let Ok(token) = doc.get_str("refresh_token") {
-            return Ok(Some(String::from(token)));
+pub struct DatabaseAPI {
+    pool: sqlx::sqlite::SqlitePool,
+}
+
+impl DatabaseAPI {
+    pub async fn new() -> Result<Self, sqlx::Error> {
+        if !sqlx::sqlite::Sqlite::database_exists(DB_URL)
+            .await
+            .unwrap_or(false)
+        {
+            sqlx::sqlite::Sqlite::create_database(DB_URL).await?;
+            println!("Created a new database");
         }
+
+        let pool = sqlx::sqlite::SqlitePool::connect(DB_URL).await?;
+
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS refresh_token (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            refresh_token VARCHAR(64) NOT NULL);",
+        )
+        .execute(&pool)
+        .await?;
+
+        Ok(Self { pool })
     }
 
-    Ok(None)
-}
+    pub async fn get_refresh_token(&self) -> Result<RefreshToken, sqlx::Error> {
+        let token = sqlx::query_as::<_, RefreshToken>("SELECT * FROM refresh_token")
+            .fetch_one(&self.pool)
+            .await?;
 
-pub fn update_refresh_token(
-    coll: &Collection<Document>,
-    old_token: &str,
-    new_token: &str,
-) -> Result<(), mongodb::error::Error> {
-    let filter = doc! { "refresh_token": old_token };
-    let update = doc! { "$set": { "refresh_token": new_token } };
-    coll.update_one(filter, update).run()?;
+        Ok(token)
+    }
 
-    Ok(())
+    pub async fn insert_refresh_token(&self, refresh_token: &str) -> Result<(), sqlx::Error> {
+        sqlx::query("INSERT INTO refresh_token (refresh_token) VALUES (?)")
+            .bind(refresh_token)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
+    pub async fn update_refresh_token(
+        &self,
+        refresh_token: &RefreshToken,
+        new_value: &str,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE refresh_token SET refresh_token = ? WHERE id = ?")
+            .bind(new_value)
+            .bind(refresh_token.id)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
 }

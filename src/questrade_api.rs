@@ -1,8 +1,8 @@
 use colored::{ColoredString, Colorize};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, env, fmt::Display};
+use std::{collections::HashMap, fmt::Display};
 
-use crate::db::{get_db_collection, get_refresh_token, update_refresh_token};
+use crate::db::{DatabaseAPI, RefreshToken};
 
 const LOGIN_URL: &str = "https://login.questrade.com/oauth2/token";
 
@@ -11,7 +11,7 @@ pub enum QuestradeAPIError {
     RequestError(reqwest::Error),
     JSONError(serde_json::Error),
     APIError(String),
-    DBError(mongodb::error::Error),
+    DBError(sqlx::Error),
 }
 
 impl Display for QuestradeAPIError {
@@ -20,7 +20,7 @@ impl Display for QuestradeAPIError {
             QuestradeAPIError::RequestError(err) => write!(f, "Request error: {}", err),
             QuestradeAPIError::JSONError(err) => write!(f, "JSON error: {}", err),
             QuestradeAPIError::APIError(msg) => write!(f, "Questrade API error: {}", msg),
-            QuestradeAPIError::DBError(err) => write!(f, "MongoDB error: {}", err),
+            QuestradeAPIError::DBError(err) => write!(f, "DB error: {}", err),
         }
     }
 }
@@ -37,78 +37,86 @@ impl From<serde_json::Error> for QuestradeAPIError {
     }
 }
 
-impl From<mongodb::error::Error> for QuestradeAPIError {
-    fn from(err: mongodb::error::Error) -> Self {
+impl From<sqlx::Error> for QuestradeAPIError {
+    fn from(err: sqlx::Error) -> Self {
         QuestradeAPIError::DBError(err)
     }
 }
 
 pub struct QuestradeAPI {
-    client: reqwest::blocking::Client,
+    client: reqwest::Client,
     token: OAuth2Token,
 }
 
 impl QuestradeAPI {
-    pub fn new(client: reqwest::blocking::Client) -> Result<Self, QuestradeAPIError> {
-        let db_password = env::vars()
-            .find(|(key, _)| key == "DB_PASSWORD")
-            .expect("DB_PASSWORD must be supplied in .env")
-            .1;
-        let coll = get_db_collection(&db_password)?;
-        let refresh_token = get_refresh_token(&coll)?.expect("No refresh token found in database");
+    pub async fn new(client: reqwest::Client, db: DatabaseAPI) -> Result<Self, QuestradeAPIError> {
+        let refresh_token = match db.get_refresh_token().await {
+            Ok(token) => token,
+            Err(err) => {
+                eprintln!("Refresh token not found in database. Run --help to see how to add one.");
+                return Err(QuestradeAPIError::DBError(err));
+            }
+        };
 
-        let token = Self::get_oauth2_token(&client, &refresh_token)?;
-        update_refresh_token(&coll, &refresh_token, &token.refresh_token)?;
+        let token = Self::get_oauth2_token(&client, &refresh_token).await?;
+        db.update_refresh_token(&refresh_token, &token.refresh_token)
+            .await?;
 
         Ok(Self { client, token })
     }
 
-    pub fn get_accounts(&self) -> Result<Vec<Account>, QuestradeAPIError> {
+    pub async fn get_accounts(&self) -> Result<Vec<Account>, QuestradeAPIError> {
         let url = format!("{}v1/accounts", self.token.api_server);
-        let resp = self.make_request(&url)?;
+        let resp = self.make_request(&url).await?;
         let accounts = serde_json::from_str::<Accounts>(&resp)?;
 
         Ok(accounts.accounts)
     }
 
-    pub fn get_balances(&self, account_id: &str) -> Result<Balances, QuestradeAPIError> {
+    pub async fn get_balances(&self, account_id: &str) -> Result<Balances, QuestradeAPIError> {
         let url = format!(
             "{}v1/accounts/{}/balances",
             self.token.api_server, account_id
         );
-        let resp = self.make_request(&url)?;
+        let resp = self.make_request(&url).await?;
         let balances = serde_json::from_str::<Balances>(&resp)?;
 
         Ok(balances)
     }
 
-    fn get_oauth2_token(
-        client: &reqwest::blocking::Client,
-        refresh_token: &str,
+    async fn get_oauth2_token(
+        client: &reqwest::Client,
+        refresh_token: &RefreshToken,
     ) -> Result<OAuth2Token, QuestradeAPIError> {
         let mut params = HashMap::new();
         params.insert("grant_type", "refresh_token");
-        params.insert("refresh_token", refresh_token);
+        params.insert("refresh_token", &refresh_token.refresh_token);
 
-        let body = client.get(LOGIN_URL).form(&params).send()?.text()?;
+        let body = client
+            .get(LOGIN_URL)
+            .form(&params)
+            .send()
+            .await?
+            .text()
+            .await?;
 
         Ok(serde_json::from_str::<OAuth2Token>(&body)?)
     }
 
-    fn get_positions(&self, account_id: &str) -> Result<Vec<Position>, QuestradeAPIError> {
+    async fn get_positions(&self, account_id: &str) -> Result<Vec<Position>, QuestradeAPIError> {
         let url = format!(
             "{}v1/accounts/{}/positions",
             self.token.api_server, account_id
         );
-        let resp = self.make_request(&url)?;
+        let resp = self.make_request(&url).await?;
         let positions = serde_json::from_str::<Positions>(&resp)?;
 
         Ok(positions.positions)
     }
 
-    fn get_symbol(&self, symbol_id: u32) -> Result<Symbol, QuestradeAPIError> {
+    async fn get_symbol(&self, symbol_id: u32) -> Result<Symbol, QuestradeAPIError> {
         let url = format!("{}v1/symbols/{}", self.token.api_server, symbol_id);
-        let resp = self.make_request(&url)?;
+        let resp = self.make_request(&url).await?;
         let symbols = serde_json::from_str::<Symbols>(&resp)?;
 
         if let Some(symbol) = symbols.symbols.first() {
@@ -118,33 +126,34 @@ impl QuestradeAPI {
         Err(QuestradeAPIError::APIError("Symbol not found".to_string()))
     }
 
-    pub fn get_positions_and_symbol_map(
+    pub async fn get_positions_and_symbol_map(
         &self,
         account_id: &str,
     ) -> Result<(Vec<Position>, HashMap<u32, Symbol>), QuestradeAPIError> {
-        let positions = self.get_positions(account_id)?;
+        let positions = self.get_positions(account_id).await?;
         let mut symbols = HashMap::new();
 
         for position in positions.iter() {
-            let symbol = self.get_symbol(position.symbol_id)?;
+            let symbol = self.get_symbol(position.symbol_id).await?;
             symbols.entry(symbol.symbol_id).or_insert(symbol);
         }
 
         Ok((positions, symbols))
     }
 
-    fn make_request(&self, url: &str) -> Result<String, QuestradeAPIError> {
+    async fn make_request(&self, url: &str) -> Result<String, QuestradeAPIError> {
         let resp = self
             .client
             .get(url)
             .bearer_auth(self.token.access_token.clone())
-            .send()?;
+            .send()
+            .await?;
 
         if !resp.status().is_success() {
-            return Err(QuestradeAPIError::APIError(resp.text()?));
+            return Err(QuestradeAPIError::APIError(resp.text().await?));
         }
 
-        Ok(resp.text()?)
+        Ok(resp.text().await?)
     }
 }
 
