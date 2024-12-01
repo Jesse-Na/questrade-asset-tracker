@@ -1,11 +1,9 @@
+mod asset_tracker;
 mod assets;
 mod db;
 mod questrade_api;
 
-use assets::Assets;
-use colored::Colorize;
 use db::DatabaseAPI;
-use questrade_api::display_positions_with_dividends;
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -39,54 +37,50 @@ async fn main() {
         }
     }
 
-    let client = reqwest::Client::new();
-    let q_api = match questrade_api::QuestradeAPI::new(client, db).await {
+    let questrade_api = match questrade_api::QuestradeAPI::new(db).await {
         Ok(api) => api,
         Err(err) => {
-            eprintln!("Error creating QuestradeAPI: {}", err);
+            eprintln!("Error creating QuestradeAPI client: {}", err);
             return;
         }
     };
 
-    let accounts = match q_api.get_accounts().await {
-        Ok(accounts) => accounts,
+    let asset_tracker = match asset_tracker::AssetTracker::new(questrade_api).await {
+        Ok(api) => api,
         Err(err) => {
-            eprintln!("Error getting accounts: {}", err);
+            eprintln!("Error starting Asset Tracker: {}", err);
             return;
         }
     };
 
-    let mut assets = Assets::new();
+    println!("Welcome to the Questrade Asset Tracker!");
+    println!("You can quit at anytime by pressing Ctrl+C or supplying the `quit` command");
+    display_help();
 
-    for account in accounts {
-        let account_title = format!("Account: {} — {}", account.type_, account.id);
-        println!("{}", account_title.blue());
+    loop {
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input).unwrap();
+        let input = input.trim();
 
-        let balances = match q_api.get_balances(&account.id).await {
-            Ok(balances) => balances,
-            Err(err) => {
-                eprintln!("Error getting balances for account {}: {}", account.id, err);
-                continue;
-            }
-        };
-
-        balances.display_balances();
-
-        let (mut positions, symbols) = match q_api.get_positions_and_symbol_map(&account.id).await {
-            Ok(res) => res,
-            Err(err) => {
-                eprintln!(
-                    "Error getting positions for account {}: {}",
-                    account.id, err
-                );
-                continue;
-            }
-        };
-
-        assets.add_positions(&positions);
-        positions.sort_by(|a, b| b.current_market_value.total_cmp(&a.current_market_value));
-        display_positions_with_dividends(&positions, &symbols);
+        match input {
+            "quit" => break,
+            "help" => display_help(),
+            "home" => asset_tracker.display_home(),
+            "accounts" => asset_tracker.display_accounts(),
+            "positions" => asset_tracker.display_positions_with_dividends(None),
+            "summary" => asset_tracker.display_summary(),
+            _ => println!("Invalid command. Please try again."),
+        }
     }
+}
 
-    println!("{}", assets);
+fn display_help() {
+    println!("Below is a list of commands and their arguments:");
+    println!();
+    println!("`quit` — Quit the program");
+    println!("`help` — Display these instructions again");
+    println!("`home` — Display the home dashboard");
+    println!("`accounts` — Display all accounts and their balances");
+    println!("`positions` — Display all positions and their dividends");
+    println!("`summary` — Display a high-level summary of your portfolio");
 }

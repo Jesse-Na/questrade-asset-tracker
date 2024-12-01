@@ -1,3 +1,5 @@
 /target
 .env
 questrade_asset_tracker.db
+questrade_asset_tracker.db-shm
+questrade_asset_tracker.db-wal

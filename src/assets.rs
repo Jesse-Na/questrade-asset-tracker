@@ -1,8 +1,6 @@
-use std::{collections::HashMap, fmt};
-
+use crate::asset_tracker;
 use colored::{Color, ColoredString, Colorize};
-
-use crate::questrade_api;
+use std::{collections::HashMap, fmt};
 
 const STOCK_TARGET: f64 = 50.0;
 const BOND_TARGET: f64 = 50.0;
@@ -79,7 +77,7 @@ impl Assets {
         }
     }
 
-    pub fn add_positions(&mut self, positions: &Vec<questrade_api::Position>) {
+    pub fn add_positions(&mut self, positions: &Vec<asset_tracker::Position>) {
         for position in positions {
             let book_cost = position.total_cost;
             let mkt_val = position.current_market_value;
@@ -95,7 +93,10 @@ impl Assets {
                 })
                 .or_insert((book_cost, mkt_val));
 
-            let asset_class = self.asset_to_class_map.get(&position.symbol).unwrap_or(&AssetClass::Cash);
+            let asset_class = self
+                .asset_to_class_map
+                .get(&position.symbol)
+                .unwrap_or(&AssetClass::Cash);
 
             self.class_map
                 .entry(asset_class.clone())
@@ -143,7 +144,8 @@ impl Assets {
     }
 
     fn get_asset_comp(&self) -> Vec<(String, f64, f64)> {
-        let mut asset_comp: Vec<_> = self.asset_map
+        let mut asset_comp: Vec<_> = self
+            .asset_map
             .iter()
             .map(|(symbol, (cost, val))| (symbol.clone(), *cost, *val))
             .collect();
@@ -153,9 +155,10 @@ impl Assets {
     }
 
     fn get_simplified_comp(&self) -> Vec<(AssetClass, f64, f64)> {
-        let mut simplified_comp: Vec<_> = self.class_map
+        let mut simplified_comp: Vec<_> = self
+            .class_map
             .iter()
-            .map(|(asset_class, (cost, val))| { (asset_class.clone(), *cost, *val) })
+            .map(|(asset_class, (cost, val))| (asset_class.clone(), *cost, *val))
             .collect();
 
         simplified_comp.sort_by(|a, b| b.2.total_cmp(&a.2));
